@@ -10,4 +10,4 @@ COPY . .
 
 EXPOSE 3000
 
-CMD [ "s", "app.js" ]
+CMD [ "node", "app.js" ]

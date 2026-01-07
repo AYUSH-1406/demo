@@ -2,29 +2,34 @@ name: Build, Push & Deploy to EC2
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout source code
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2️⃣ Configure AWS credentials (for GitHub runner → ECR push)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ap-south-1
 
+      # 3️⃣ Login to ECR (GitHub runner)
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Image
+      # 4️⃣ Build & push Docker image to ECR
+      - name: Build and Push Docker Image
         env:
-          ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ECR_REGISTRY: 203071037199.dkr.ecr.ap-south-1.amazonaws.com
           ECR_REPOSITORY: demo
           IMAGE_TAG: latest
         run: |
@@ -32,17 +37,30 @@ jobs:
           docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
+      # 5️⃣ Deploy to EC2 (THIS IS THE IMPORTANT PART)
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/demo:latest
+            set -e
+
+            echo "Logging into ECR from EC2..."
+            aws ecr get-login-password --region ap-south-1 | \
+            docker login --username AWS --password-stdin 203071037199.dkr.ecr.ap-south-1.amazonaws.com
+
+            echo "Pulling latest image..."
+            docker pull 203071037199.dkr.ecr.ap-south-1.amazonaws.com/demo:latest
+
+            echo "Stopping old container..."
             docker stop demo-app || true
             docker rm demo-app || true
+
+            echo "Starting new container..."
             docker run -d \
+              --restart always \
               --name demo-app \
               -p 3000:3000 \
-              ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/demo:latest
+              203071037199.dkr.ecr.ap-south-1.amazonaws.com/demo:latest
